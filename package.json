@@ -1,0 +1,22 @@
+{
+  "name": "writing-practice",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "node server/index.js",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "NODE_ENV=production node server/index.js",
+    "postinstall": "npm --prefix client install"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pdfjs-dist": "^4.5.136"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

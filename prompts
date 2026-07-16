@@ -1,0 +1,25 @@
+Your job is to make a webpage which is for practicing english writing (paper writing) for korean native following the below requirements.
+
+
+Requirements:
+
+- You must build a webpage to practice english writing using the papers i gave you.
+
+- I will give you an arxiv link for papers.
+
+- Your job is to translate them into korean using the "GEMINI_API_KEY" in the .env
+
+- You must show line by line translation for me. and make me to correct the original english sentence.
+
+- I will write autoregressively.
+
+- Before import the paper, make the user to set the pages. so that users only work for the pages they desire.
+
+- I want you to make like a overleaf, so left pannel users write their sentences and right pannel show the full paper preview to the part where users written which makes users fill to they are completing the paper. And show the users which part of paper they are working.
+
+- Also allow hint button which shows the sentence for a tiny amount of seconds.
+
+- You need to save the what users done or the translation and so on... (the data) in the local file in this project. so that the when user restarts the server and open it start from their last position.
+
+- Make a mordern smooth web using react or something.
+
