@@ -15,7 +15,7 @@ export default function Workspace({ paperId, onExit }) {
   const [result, setResult] = useState(null); // diff result after "Check"
   const [hintLeft, setHintLeft] = useState(0); // seconds of hint remaining
   const [showKo, setShowKo] = useState(true); // Korean translation visible?
-  const [streak, setStreak] = useState(0); // consecutive perfect writes of the current sentence
+  const [streak, setStreak] = useState(0); // total perfect writes of the current sentence (misses don't reset it)
   const [flash, setFlash] = useState(0); // >0 briefly after a perfect write, to show feedback
   const flashTimer = useRef(null);
   const [saving, setSaving] = useState(false);
@@ -67,11 +67,11 @@ export default function Workspace({ paperId, onExit }) {
   useEffect(() => {
     setResult(null);
     setHintLeft(0);
-    setStreak(0);
     setFlash(0);
     clearInterval(hintTimer.current);
     clearTimeout(flashTimer.current);
     const prev = attempts[current];
+    setStreak(prev && !prev.done ? prev.correct || 0 : 0);
     setText(prev && !prev.done ? prev.text || '' : '');
     textareaRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -89,9 +89,10 @@ export default function Workspace({ paperId, onExit }) {
     setAttempts(nextAttempts);
     if (perfect) {
       // No result box on a perfect write: clear the input and go again.
-      // After STREAK_GOAL perfect writes in a row, move to the next sentence.
+      // After STREAK_GOAL perfect writes in total, move to the next sentence.
       setResult(null);
       const s = streak + 1;
+      nextAttempts[current] = { ...nextAttempts[current], correct: s };
       if (s >= STREAK_GOAL) {
         const doneAttempts = {
           ...nextAttempts,
@@ -111,8 +112,7 @@ export default function Workspace({ paperId, onExit }) {
       textareaRef.current?.focus();
       persist(current, nextAttempts);
     } else {
-      // A miss shows the diff and resets the streak.
-      setStreak(0);
+      // A miss shows the diff; the correct count is kept.
       setResult({ ...diff, perfect });
       persist(current, nextAttempts);
     }
@@ -310,7 +310,7 @@ export default function Workspace({ paperId, onExit }) {
                 <button className="btn" onClick={next}>
                   Skip / Next →
                 </button>
-                <span className="streak" title={`Write it perfectly ${STREAK_GOAL} times in a row to move on`}>
+                <span className="streak" title={`Write it perfectly ${STREAK_GOAL} times to move on`}>
                   {Array.from({ length: STREAK_GOAL }, (_, i) => (
                     <span key={i} className={`streak-dot ${i < streak ? 'on' : ''}`} />
                   ))}
