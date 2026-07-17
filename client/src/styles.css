@@ -422,8 +422,8 @@ button {
   min-height: 0;
 }
 
-/* left panel */
-.panel-left {
+/* left panel — writing */
+.panel-write {
   padding: 26px 30px;
   overflow-y: auto;
   border-right: 1px solid var(--border);
@@ -451,12 +451,28 @@ button {
 .ko-count {
   color: var(--text-dim);
 }
+.ko-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.ko-toggle {
+  font-size: 12px;
+  font-weight: 700;
+}
 .ko-sentence {
   margin: 0;
   font-size: 19px;
   line-height: 1.75;
   font-family: 'Noto Sans KR', sans-serif;
   font-weight: 500;
+  transition: filter 0.25s ease, opacity 0.25s ease;
+}
+.ko-sentence.ko-hidden {
+  filter: blur(9px);
+  opacity: 0.55;
+  user-select: none;
+  pointer-events: none;
 }
 .hint-zone {
   margin-top: 18px;
@@ -507,7 +523,39 @@ button {
 }
 .write-actions {
   display: flex;
+  align-items: center;
   gap: 12px;
+}
+
+.streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.streak-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.streak-dot.on {
+  background: var(--good);
+  border-color: var(--good);
+  box-shadow: 0 0 8px rgba(62, 207, 142, 0.6);
+}
+.streak-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.streak-flash {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--good);
+  white-space: nowrap;
 }
 
 .result-card {
@@ -586,7 +634,7 @@ button {
 }
 
 /* right panel — the paper */
-.panel-right {
+.panel-paper {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -607,76 +655,65 @@ button {
   overflow-y: auto;
   padding: 28px;
 }
-.paper-sheet {
-  background: var(--paper);
-  color: var(--paper-text);
-  max-width: 760px;
+/* ---------- PDF preview ---------- */
+
+.pdf-host {
+  max-width: 900px;
   margin: 0 auto;
-  border-radius: 6px;
-  padding: 56px 62px 72px;
+}
+.pdf-page {
+  position: relative;
+  margin: 0 auto 20px;
+  background: var(--paper);
+  border-radius: 4px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
-  font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  overflow: hidden;
 }
-.sheet-title {
-  font-size: 21px;
-  text-align: center;
-  margin: 0 0 30px;
-  line-height: 1.4;
+.pdf-page canvas {
+  display: block;
 }
-.sheet-page-label {
-  text-align: center;
-  color: #b0aca0;
-  font-size: 12px;
-  margin: 26px 0 14px;
-  letter-spacing: 0.08em;
+.pdf-page-num {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.35);
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 99px;
+  padding: 1px 8px;
+  pointer-events: none;
 }
-.sheet-text {
-  margin: 0;
-  font-size: 15.5px;
-  line-height: 1.85;
-  text-align: justify;
+.pdf-overlay {
+  position: absolute;
+  border-radius: 2px;
 }
-.sheet-sentence {
-  transition: filter 0.4s ease, background 0.3s ease;
-  border-radius: 3px;
+.pdf-overlay.future {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  background: rgba(253, 252, 248, 0.25);
 }
-.sheet-sentence.done {
+.pdf-overlay.done {
   cursor: pointer;
 }
-.sheet-sentence.done:hover {
-  background: rgba(124, 140, 255, 0.14);
+.pdf-overlay.done:hover {
+  background: rgba(124, 140, 255, 0.22);
 }
-.sheet-sentence.current {
-  background: linear-gradient(180deg, rgba(255, 214, 90, 0.55), rgba(255, 214, 90, 0.35));
-  box-shadow: 0 0 0 4px rgba(255, 214, 90, 0.35);
+.pdf-overlay.current {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  background: rgba(255, 214, 90, 0.4);
+  box-shadow: 0 0 0 3px rgba(255, 214, 90, 0.45);
   animation: pulseHl 1.6s ease-in-out infinite;
 }
 @keyframes pulseHl {
   0%,
   100% {
-    box-shadow: 0 0 0 4px rgba(255, 214, 90, 0.35);
+    box-shadow: 0 0 0 3px rgba(255, 214, 90, 0.45);
   }
   50% {
-    box-shadow: 0 0 0 6px rgba(255, 214, 90, 0.15);
+    box-shadow: 0 0 0 6px rgba(255, 214, 90, 0.18);
   }
-}
-.sheet-sentence.future {
-  filter: blur(5px);
-  user-select: none;
-  opacity: 0.75;
-}
-.here-badge {
-  display: inline-block;
-  font-family: 'Inter', sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-  background: #23252b;
-  color: #ffd65a;
-  border-radius: 99px;
-  padding: 2px 9px;
-  margin: 0 6px 0 2px;
-  vertical-align: 2px;
-  white-space: nowrap;
 }
 
 @media (max-width: 980px) {
@@ -684,7 +721,8 @@ button {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
-  .panel-left {
+  /* stack the writing panel on top, paper below */
+  .panel-write {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }

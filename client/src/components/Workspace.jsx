@@ -4,6 +4,7 @@ import { diffWords, normalizeSentence } from '../diff.js';
 import Preview from './Preview.jsx';
 
 const HINT_SECONDS = 3;
+const STREAK_GOAL = 5; // perfect writes required to move on
 
 export default function Workspace({ paperId, onExit }) {
   const [paper, setPaper] = useState(null);
@@ -13,6 +14,10 @@ export default function Workspace({ paperId, onExit }) {
   const [text, setText] = useState('');
   const [result, setResult] = useState(null); // diff result after "Check"
   const [hintLeft, setHintLeft] = useState(0); // seconds of hint remaining
+  const [showKo, setShowKo] = useState(true); // Korean translation visible?
+  const [streak, setStreak] = useState(0); // consecutive perfect writes of the current sentence
+  const [flash, setFlash] = useState(0); // >0 briefly after a perfect write, to show feedback
+  const flashTimer = useRef(null);
   const [saving, setSaving] = useState(false);
   const textareaRef = useRef(null);
   const hintTimer = useRef(null);
@@ -62,7 +67,10 @@ export default function Workspace({ paperId, onExit }) {
   useEffect(() => {
     setResult(null);
     setHintLeft(0);
+    setStreak(0);
+    setFlash(0);
     clearInterval(hintTimer.current);
+    clearTimeout(flashTimer.current);
     const prev = attempts[current];
     setText(prev && !prev.done ? prev.text || '' : '');
     textareaRef.current?.focus();
@@ -79,8 +87,35 @@ export default function Workspace({ paperId, onExit }) {
       [current]: { ...prev, text, tries: (prev.tries || 0) + 1, score: diff.score, perfect },
     };
     setAttempts(nextAttempts);
-    setResult({ ...diff, perfect });
-    persist(current, nextAttempts);
+    if (perfect) {
+      // No result box on a perfect write: clear the input and go again.
+      // After STREAK_GOAL perfect writes in a row, move to the next sentence.
+      setResult(null);
+      const s = streak + 1;
+      if (s >= STREAK_GOAL) {
+        const doneAttempts = {
+          ...nextAttempts,
+          [current]: { ...nextAttempts[current], done: true },
+        };
+        const nextCurrent = Math.min(current + 1, sentences.length);
+        setAttempts(doneAttempts);
+        setCurrent(nextCurrent);
+        persist(nextCurrent, doneAttempts);
+        return;
+      }
+      setStreak(s);
+      setText('');
+      setFlash(s);
+      clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlash(0), 1400);
+      textareaRef.current?.focus();
+      persist(current, nextAttempts);
+    } else {
+      // A miss shows the diff and resets the streak.
+      setStreak(0);
+      setResult({ ...diff, perfect });
+      persist(current, nextAttempts);
+    }
   };
 
   const next = () => {
@@ -119,8 +154,7 @@ export default function Workspace({ paperId, onExit }) {
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (result && (result.perfect || result.score >= 0.999)) next();
-      else check();
+      check();
     }
   };
 
@@ -165,7 +199,7 @@ export default function Workspace({ paperId, onExit }) {
       <div className="app-loading">
         <div className="translating-card">
           <div className="spinner" />
-          <h3>Translating with Gemini…</h3>
+          <h3>Translating with Codex…</h3>
           <p className="hint-text">
             {paper.translatedCount || 0} / {sentences.length} sentences
           </p>
@@ -208,7 +242,7 @@ export default function Workspace({ paperId, onExit }) {
 
       <div className="ws-panels">
         {/* ------- left: writing panel ------- */}
-        <section className="panel-left">
+        <section className="panel-write">
           {done ? (
             <div className="complete-card fade-in">
               <div className="empty-icon">🏆</div>
@@ -226,10 +260,21 @@ export default function Workspace({ paperId, onExit }) {
             <>
               <div className="ko-card fade-in" key={current}>
                 <div className="ko-label">
-                  한국어 번역 — 이 문장을 영어로 써보세요
-                  <span className="ko-count">#{current + 1}</span>
+                  Korean translation — write this sentence in English
+                  <span className="ko-actions">
+                    <button
+                      className="btn-link ko-toggle"
+                      onClick={() => setShowKo((v) => !v)}
+                      title={showKo ? 'Hide the Korean translation' : 'Show the Korean translation'}
+                    >
+                      {showKo ? '🙈 Hide' : '👁 Show'}
+                    </button>
+                    <span className="ko-count">#{current + 1}</span>
+                  </span>
                 </div>
-                <p className="ko-sentence">{sentence.ko || '(번역 없음)'}</p>
+                <p className={`ko-sentence ${showKo ? '' : 'ko-hidden'}`}>
+                  {sentence.ko || '(no translation)'}
+                </p>
                 <div className={`hint-zone ${hintLeft > 0 ? 'revealed' : ''}`}>
                   {hintLeft > 0 ? (
                     <p className="hint-sentence">
@@ -256,47 +301,40 @@ export default function Workspace({ paperId, onExit }) {
               />
 
               <div className="write-actions">
+                <button className="btn" onClick={() => jumpTo(current - 1)} disabled={current === 0}>
+                  ← Prev
+                </button>
                 <button className="btn btn-primary" onClick={check} disabled={!text.trim()}>
                   Check ↵
                 </button>
                 <button className="btn" onClick={next}>
                   Skip / Next →
                 </button>
+                <span className="streak" title={`Write it perfectly ${STREAK_GOAL} times in a row to move on`}>
+                  {Array.from({ length: STREAK_GOAL }, (_, i) => (
+                    <span key={i} className={`streak-dot ${i < streak ? 'on' : ''}`} />
+                  ))}
+                  <span className="streak-count">{streak}/{STREAK_GOAL}</span>
+                  {flash > 0 && (
+                    <span key={flash} className="streak-flash fade-in">✓ Correct — write it again!</span>
+                  )}
+                </span>
               </div>
 
               {result && (
-                <div className={`result-card fade-in ${result.perfect ? 'perfect' : ''}`}>
+                <div className="result-card fade-in">
                   <div className="result-head">
-                    {result.perfect ? (
-                      <span className="result-badge good">Perfect! 🎯</span>
-                    ) : (
-                      <span className="result-badge">
-                        {Math.round(result.score * 100)}% word match
-                      </span>
-                    )}
-                    {!result.perfect && (
-                      <span className="hint-text">초록색은 맞은 단어, 빨간색은 다르게 쓴 부분</span>
-                    )}
+                    <span className="result-badge">
+                      {Math.round(result.score * 100)}% word match
+                    </span>
+                    <span className="hint-text">green = matched words, red = differences</span>
                   </div>
 
-                  {!result.perfect && (
-                    <div className="diff-block">
-                      <div className="diff-label">Your sentence</div>
-                      <p className="diff-line">
-                        {result.user.map((t, i) => (
-                          <span key={i} className={t.ok ? 'w-ok' : 'w-bad'}>
-                            {t.word}{' '}
-                          </span>
-                        ))}
-                      </p>
-                    </div>
-                  )}
-
                   <div className="diff-block">
-                    <div className="diff-label">Original sentence</div>
-                    <p className="diff-line original">
-                      {result.original.map((t, i) => (
-                        <span key={i} className={t.ok ? 'w-ok' : 'w-missed'}>
+                    <div className="diff-label">Your sentence</div>
+                    <p className="diff-line">
+                      {result.user.map((t, i) => (
+                        <span key={i} className={t.ok ? 'w-ok' : 'w-bad'}>
                           {t.word}{' '}
                         </span>
                       ))}
@@ -304,19 +342,14 @@ export default function Workspace({ paperId, onExit }) {
                   </div>
 
                   <div className="write-actions">
-                    {!result.perfect && (
-                      <button
-                        className="btn"
-                        onClick={() => {
-                          setResult(null);
-                          textareaRef.current?.focus();
-                        }}
-                      >
-                        ✏️ Try again
-                      </button>
-                    )}
-                    <button className="btn btn-primary" onClick={next}>
-                      Next sentence →
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        setResult(null);
+                        textareaRef.current?.focus();
+                      }}
+                    >
+                      ✏️ Try again
                     </button>
                   </div>
                 </div>
@@ -325,7 +358,7 @@ export default function Workspace({ paperId, onExit }) {
           )}
         </section>
 
-        {/* ------- right: paper preview ------- */}
+        {/* ------- right: the paper, with unwritten sentences blurred ------- */}
         <Preview paper={paper} current={current} onJump={jumpTo} />
       </div>
     </div>

@@ -24,7 +24,7 @@ export default function Library({ onOpen, onNew }) {
           <h1>
             Paper Writing <span className="accent">Practice</span>
           </h1>
-          <p className="subtitle">한국어 번역을 보고 영어 논문 문장을 다시 써보는 연습장</p>
+          <p className="subtitle">Read the Korean translation, rewrite the original English sentence</p>
         </div>
         <button className="btn btn-primary" onClick={onNew}>
           + Import arXiv paper

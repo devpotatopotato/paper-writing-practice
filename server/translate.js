@@ -1,5 +1,18 @@
-const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3-flash-preview', 'gemini-2.0-flash'];
+import { Codex } from '@openai/codex-sdk';
+
+const MODEL = 'gpt-5.6-sol';
+const REASONING_EFFORT = 'low';
 const CHUNK_SIZE = 25;
+const CHUNK_TIMEOUT_MS = 180_000;
+
+const codex = new Codex();
+
+const OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: { translations: { type: 'array', items: { type: 'string' } } },
+  required: ['translations'],
+  additionalProperties: false,
+};
 
 function buildPrompt(sentences) {
   const numbered = sentences.map((s, i) => `${i + 1}. ${s}`).join('\n');
@@ -8,76 +21,48 @@ function buildPrompt(sentences) {
     `${sentences.length} English sentences from a research paper into natural, formal ` +
     `Korean using academic written style (문어체, "-다" 체). Keep technical terms, ` +
     `math symbols, citations like [3], and proper nouns as-is when appropriate.\n\n` +
-    `Return ONLY a JSON array of exactly ${sentences.length} strings, where element i ` +
-    `is the Korean translation of sentence i. Do not merge, split, or skip sentences.\n\n` +
+    `Return a JSON object with a "translations" array of exactly ${sentences.length} ` +
+    `strings, where element i is the Korean translation of sentence i. Do not merge, ` +
+    `split, or skip sentences. Do not run any commands or read any files.\n\n` +
     `Sentences:\n${numbered}`
   );
 }
 
-async function callGemini(apiKey, prompt) {
-  let lastErr;
-  for (const model of GEMINI_MODELS) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-          }),
-        }
-      );
-      if (res.ok) {
-        const json = await res.json();
-        const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
-        return text;
-      }
-      const body = await res.text();
-      lastErr = new Error(`Gemini ${model} HTTP ${res.status}: ${body.slice(0, 300)}`);
-      if (res.status === 404 || res.status === 400) break; // try next model
-      if (res.status === 429 || res.status >= 500) {
-        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
-        continue;
-      }
-      throw lastErr;
-    }
+async function translateChunk(sentences) {
+  const thread = codex.startThread({
+    model: MODEL,
+    modelReasoningEffort: REASONING_EFFORT,
+    sandboxMode: 'read-only',
+    skipGitRepoCheck: true,
+  });
+  const turn = await thread.run(buildPrompt(sentences), {
+    outputSchema: OUTPUT_SCHEMA,
+    signal: AbortSignal.timeout(CHUNK_TIMEOUT_MS),
+  });
+  const parsed = JSON.parse(turn.finalResponse);
+  if (!Array.isArray(parsed?.translations)) {
+    throw new Error('Codex response has no translations array');
   }
-  throw lastErr || new Error('Gemini call failed');
-}
-
-function parseArray(text, expected) {
-  let arr;
-  try {
-    arr = JSON.parse(text);
-  } catch {
-    // Salvage a JSON array embedded in surrounding text.
-    const m = text.match(/\[[\s\S]*\]/);
-    if (!m) throw new Error('Gemini returned non-JSON response');
-    arr = JSON.parse(m[0]);
-  }
-  if (!Array.isArray(arr)) throw new Error('Gemini response is not an array');
-  return arr.map((x) => String(x)).slice(0, expected);
+  return parsed.translations.map((x) => String(x)).slice(0, sentences.length);
 }
 
 /**
- * Translate sentences to Korean in chunks.
+ * Translate sentences to Korean in chunks via the Codex agent (ChatGPT login).
  * Calls onProgress(translatedCount) after each chunk so the caller can persist progress.
  */
-export async function translateAll(apiKey, sentences, onProgress) {
+export async function translateAll(sentences, onProgress) {
   const out = new Array(sentences.length).fill(null);
   for (let start = 0; start < sentences.length; start += CHUNK_SIZE) {
     const chunk = sentences.slice(start, start + CHUNK_SIZE);
     let translations;
     try {
-      translations = parseArray(await callGemini(apiKey, buildPrompt(chunk)), chunk.length);
-    } catch (err) {
+      translations = await translateChunk(chunk);
+    } catch {
       // One retry for the chunk, then fail the whole job with a clear message.
-      translations = parseArray(await callGemini(apiKey, buildPrompt(chunk)), chunk.length);
+      translations = await translateChunk(chunk);
     }
     for (let i = 0; i < chunk.length; i++) {
-      out[start + i] = translations[i] ?? '(번역 실패)';
+      out[start + i] = translations[i] ?? '(translation failed)';
     }
     await onProgress?.(Math.min(start + CHUNK_SIZE, sentences.length), out);
   }

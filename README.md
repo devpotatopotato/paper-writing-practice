@@ -11,14 +11,15 @@ npm install        # installs server + client deps
 npm run dev        # server on :5175, client on :5173
 ```
 
-Open http://localhost:5173. `GEMINI_API_KEY` must be set in `.env` (it already is).
+Open http://localhost:5173. Translation runs through the [Codex SDK](https://github.com/openai/codex/tree/main/sdk/typescript)
+using your ChatGPT login — run `codex login` once if you haven't.
 
 ## How it works
 
 1. **Import** — paste an arXiv link, pick the page range you want to practice.
 2. The server downloads the PDF, extracts those pages, splits them into sentences,
-   and translates each sentence into Korean with Gemini (in the background, with a
-   progress bar).
+   and translates each sentence into Korean with Codex (`gpt-5.6-sol`, low reasoning
+   effort) in the background, with a progress bar.
 3. **Practice** — left panel shows the Korean translation; you write the English
    sentence. `Enter` checks your attempt against the original with a word-level diff.
    The 💡 hint button flashes the original sentence for 3 seconds.

@@ -2,12 +2,12 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArxivId, fetchTitle, getNumPages, extractPages, splitSentences } from './arxiv.js';
+import { parseArxivId, fetchTitle, fetchPdf, getNumPages, extractPages, splitSentences } from './arxiv.js';
 import { translateAll } from './translate.js';
+import { cleanSentences } from './cleanup.js';
 import { savePaper, loadPaper, listPapers, deletePaper, paperIdFor } from './store.js';
 
 const PORT = process.env.PORT || 5175;
-const API_KEY = process.env.GEMINI_API_KEY;
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
@@ -16,6 +16,41 @@ const asyncRoute = (fn) => (req, res) =>
     console.error(err);
     res.status(500).json({ error: err.message || 'Internal error' });
   });
+
+// Translate whatever sentences still lack a Korean translation, persisting
+// after every chunk so a restart (or a retry after an error) resumes cleanly.
+async function runTranslation(id) {
+  const paper = await loadPaper(id);
+  if (!paper) return;
+  const missing = paper.sentences.filter((s) => !s.ko);
+  const finish = async () => {
+    const p = await loadPaper(id);
+    if (!p) return;
+    p.translatedCount = p.sentences.filter((s) => s.ko).length;
+    p.status = p.translatedCount >= p.sentences.length ? 'ready' : 'translating';
+    p.updatedAt = new Date().toISOString();
+    await savePaper(p);
+  };
+  if (missing.length === 0) return finish();
+  await translateAll(missing.map((s) => s.en), async (count, partial) => {
+    const p = await loadPaper(id);
+    if (!p) return;
+    for (let i = 0; i < count; i++) if (partial[i]) p.sentences[missing[i].idx].ko = partial[i];
+    p.translatedCount = p.sentences.filter((s) => s.ko).length;
+    p.status = p.translatedCount >= p.sentences.length ? 'ready' : 'translating';
+    p.updatedAt = new Date().toISOString();
+    await savePaper(p);
+  });
+}
+
+const failTranslation = (id) => async (err) => {
+  console.error('Translation failed:', err);
+  const p = await loadPaper(id);
+  if (!p) return;
+  p.status = 'error';
+  p.error = err.message;
+  await savePaper(p);
+};
 
 // Step 1 of import: resolve the link, report title + page count so the user can pick pages.
 app.post('/api/inspect', asyncRoute(async (req, res) => {
@@ -32,10 +67,8 @@ app.post('/api/papers', asyncRoute(async (req, res) => {
   if (!arxivId || !Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
     return res.status(400).json({ error: 'Invalid page range.' });
   }
-  if (!API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY is missing in .env' });
-
-  const pages = await extractPages(arxivId, from, to);
-  const sentences = splitSentences(pages);
+  const { pages, blocks: rawBlocks } = await extractPages(arxivId, from, to);
+  const { sentences, masks, blocks } = splitSentences(rawBlocks);
   if (sentences.length === 0) {
     return res.status(422).json({ error: 'No usable sentences found in that page range.' });
   }
@@ -54,6 +87,9 @@ app.post('/api/papers', asyncRoute(async (req, res) => {
     error: null,
     translatedCount: 0,
     sentences: sentences.map((s) => ({ ...s, ko: null })),
+    blocks,
+    pages,
+    masks,
     progress: { current: 0, attempts: {} },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -61,23 +97,18 @@ app.post('/api/papers', asyncRoute(async (req, res) => {
   await savePaper(paper);
   res.json(paper);
 
-  // Background translation; progress is persisted after every chunk so a restart resumes cleanly.
-  translateAll(API_KEY, sentences.map((s) => s.en), async (count, partial) => {
+  // Background: repair PDF line-break artifacts with Codex, then translate.
+  (async () => {
+    const fixed = await cleanSentences(sentences.map((s) => s.en));
     const p = await loadPaper(id);
     if (!p) return;
-    for (let i = 0; i < count; i++) if (partial[i]) p.sentences[i].ko = partial[i];
-    p.translatedCount = count;
-    p.status = count >= sentences.length ? 'ready' : 'translating';
+    fixed.forEach((en, i) => {
+      p.sentences[i].en = en;
+    });
     p.updatedAt = new Date().toISOString();
     await savePaper(p);
-  }).catch(async (err) => {
-    console.error('Translation failed:', err);
-    const p = await loadPaper(id);
-    if (!p) return;
-    p.status = 'error';
-    p.error = err.message;
-    await savePaper(p);
-  });
+    await runTranslation(id);
+  })().catch(failTranslation(id));
 }));
 
 app.get('/api/papers', asyncRoute(async (_req, res) => res.json(await listPapers())));
@@ -88,6 +119,14 @@ app.get('/api/papers/:id', asyncRoute(async (req, res) => {
   res.json(paper);
 }));
 
+// The original PDF, for the preview panel.
+app.get('/api/papers/:id/pdf', asyncRoute(async (req, res) => {
+  const paper = await loadPaper(req.params.id);
+  if (!paper) return res.status(404).json({ error: 'Paper not found' });
+  const data = await fetchPdf(paper.arxivId);
+  res.type('application/pdf').send(Buffer.from(data));
+}));
+
 // Retry translation for a paper stuck in "error" (e.g. network hiccup).
 app.post('/api/papers/:id/retranslate', asyncRoute(async (req, res) => {
   const paper = await loadPaper(req.params.id);
@@ -96,21 +135,7 @@ app.post('/api/papers/:id/retranslate', asyncRoute(async (req, res) => {
   paper.error = null;
   await savePaper(paper);
   res.json(paper);
-  translateAll(API_KEY, paper.sentences.map((s) => s.en), async (count, partial) => {
-    const p = await loadPaper(paper.id);
-    if (!p) return;
-    for (let i = 0; i < count; i++) if (partial[i]) p.sentences[i].ko = partial[i];
-    p.translatedCount = count;
-    p.status = count >= p.sentences.length ? 'ready' : 'translating';
-    p.updatedAt = new Date().toISOString();
-    await savePaper(p);
-  }).catch(async (err) => {
-    const p = await loadPaper(paper.id);
-    if (!p) return;
-    p.status = 'error';
-    p.error = err.message;
-    await savePaper(p);
-  });
+  runTranslation(paper.id).catch(failTranslation(paper.id));
 }));
 
 // Persist the user's writing progress (current position, attempts, hint counts).
@@ -141,5 +166,4 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, () => {
   console.log(`✍️  writing-practice server on http://localhost:${PORT}`);
-  if (!API_KEY) console.warn('⚠️  GEMINI_API_KEY not found in .env — translation will fail.');
 });
